@@ -10,7 +10,7 @@ class WebSocketServer
 {
     const GUID_PROT  = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
-    private $socket;
+    private $main_socket;
 
     private $host;
 
@@ -40,54 +40,85 @@ class WebSocketServer
     }
 
     public function start(){
-        $this->socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
-        socket_set_option($this->socket, SOL_SOCKET, SO_REUSEADDR, 1);
-        socket_bind($this->socket, 0, $this->port);
-        socket_listen($this->socket);
+        $this->main_socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+        socket_set_option($this->main_socket, SOL_SOCKET, SO_REUSEADDR, 1);
+        socket_bind($this->main_socket, 0, $this->port);
+        socket_listen($this->main_socket);
 
-        $this->client_sockets = [$this->socket];
+        $this->client_sockets = [new WebSocketClient("main_socket", $this->main_socket)];
 
         $null = null;
         while(true){
-
             $newSocketArray = $this->client_sockets;
-            socket_select($newSocketArray, $null, $null, 0, 10);
+            $socketsArray = array_map(function($pClient){return $pClient->socket;}, $newSocketArray);
+            socket_select($socketsArray, $null, $null, 0, 10);
 
-            if (in_array($this->socket, $newSocketArray)) {
-                $newSocket = socket_accept($this->socket);
-                $this->client_sockets[] = $newSocket;
-
-                $header = socket_read($newSocket, 2048);
-                $this->handShake($header, $newSocket);
-
-                socket_getpeername($newSocket, $client_ip_address);
-                $this->callHandler($this->clientConnectionHandler, ['new client']);
-
-                $newSocketIndex = array_search($this->socket, $newSocketArray);
-                unset($newSocketArray[$newSocketIndex]);
-            }
-
-            foreach ($newSocketArray as $newSocketArrayResource) {
-                while(socket_recv($newSocketArrayResource, $socketData, 2048, 0) >= 1){
-                    $socketMessage = $this->unseal($socketData);
-                    $this->callHandler($this->messageHandler, [$socketMessage]);
-                    break 2;
+            foreach($socketsArray as $socket){
+                $socketClient = null;
+                $index = null;
+                foreach($this->client_sockets as $idx=>$s){
+                    if($s->socket == $socket){
+                        $socketClient = $s;
+                        $index = $idx;
+                        break;
+                    }
                 }
-
-                /**
-                 * Déconnexion ?
-                 */
-                $socketData = @socket_read($newSocketArrayResource, 2048, PHP_NORMAL_READ);
-                if ($socketData === false) {
-                    socket_getpeername($newSocketArrayResource, $client_ip_address);
-                    $this->callHandler($this->clientDisconnectionHandler, ['client leaved']);
-                    $newSocketIndex = array_search($newSocketArrayResource, $this->client_sockets);
-                    unset($this->client_sockets[$newSocketIndex]);
+                if($socket==$this->main_socket){
+                    $this->acceptClient();
+                    $this->callHandler($this->clientConnectionHandler, ['new client']);
+                }
+                else{
+                    $bytes = @socket_recv($socket,$buffer,2048,0);
+                    if($bytes == 0){
+                        $this->debug('disconnecting '.$socketClient->id.' '.count($this->client_sockets));
+                        $this->debug(socket_last_error($socket));
+                        socket_close($socket);
+                        unset($this->client_sockets[$index]);
+                        $this->debug('disconnected '.$socketClient->id.' '.count($this->client_sockets));
+                        $this->callHandler($this->clientDisconnectionHandler, ['Disconnected client']);
+                    }else{
+                        $socketMessage = WebSocketMessage::read($buffer);
+                        $this->debug('Got a message '.$socketMessage." from ".$socketClient->id.'   '.$buffer);
+                        $this->callHandler($this->messageHandler, [$socketMessage]);
+                    }
                 }
             }
         }
+    }
 
-        socket_close($this->socket);
+    private function acceptClient(){
+
+        $socket=socket_accept($this->main_socket);
+        $header = socket_read($socket, 2048);
+        $this->handShake($header, $socket);
+
+        $id = null;
+        $in = true;
+        while($in){
+            $id = WebSocketClient::generateId();
+            foreach($this->client_sockets as $client){
+                if($id == $client->id){
+                    $in = true;
+                    continue 2;
+                }
+            }
+            $in = false;
+        }
+
+        $client = new WebSocketClient($id, $socket);
+        $this->client_sockets[] = $client;
+        $this->notifyClients('you are connected', [$client]);
+        $this->debug("acceptedClient ".$id." ".count($this->client_sockets));
+        return $client;
+    }
+
+    private function debug($pData){
+        if(is_string($pData)){
+            echo $pData;
+        }else{
+            print_r($pData);
+        }
+        echo PHP_EOL;
     }
 
     private function callHandler($pCallable, $pParams){
@@ -96,14 +127,22 @@ class WebSocketServer
         }
     }
 
-    public function notifyClients($message) {
-        $message = $this->seal($message);
+    public function notifyClients($pMessage, $pClients){
+        if(empty($pClients)){
+            return false;
+        }
+        $this->debug('notifying "'.$pMessage.'" to '.count($pClients).' clients');
+        $message = WebSocketMessage::write($pMessage);
         $messageLength = strlen($message);
-        foreach($this->client_sockets as $clientSocket)
+        foreach($pClients as $clientSocket)
         {
-            @socket_write($clientSocket,$message,$messageLength);
+            @socket_write($clientSocket->socket, $message, $messageLength);
         }
         return true;
+    }
+
+    public function notifyAllClients($pMessage) {
+        return $this->notifyClients($pMessage, $this->client_sockets);
     }
 
     private function handShake($received_header,$client_socket_resource){
@@ -130,40 +169,6 @@ class WebSocketServer
         socket_write($client_socket_resource,$buffer,strlen($buffer));
     }
 
-    private function unseal($socketData) {
-        $length = ord($socketData[1]) & 127;
-        if($length == 126) {
-            $masks = substr($socketData, 4, 4);
-            $data = substr($socketData, 8);
-        }
-        elseif($length == 127) {
-            $masks = substr($socketData, 10, 4);
-            $data = substr($socketData, 14);
-        }
-        else {
-            $masks = substr($socketData, 2, 4);
-            $data = substr($socketData, 6);
-        }
-        $socketData = "";
-        for ($i = 0; $i < strlen($data); ++$i) {
-            $socketData .= $data[$i] ^ $masks[$i%4];
-        }
-        return $socketData;
-    }
-
-    private function seal($socketData) {
-        $b1 = 0x80 | (0x1 & 0x0f);
-        $length = strlen($socketData);
-
-        if($length <= 125)
-            $header = pack('CC', $b1, $length);
-        elseif($length > 125 && $length < 65536)
-            $header = pack('CCn', $b1, 126, $length);
-        elseif($length >= 65536)
-            $header = pack('CCNN', $b1, 127, $length);
-        return $header.$socketData;
-    }
-
     public function onMessage($pCallBack){
         if(is_callable($pCallBack)){
             $this->messageHandler = $pCallBack;
@@ -180,5 +185,68 @@ class WebSocketServer
         if(is_callable($pCallBack)){
             $this->clientDisconnectionHandler = $pCallBack;
         }
+    }
+}
+
+class WebSocketClient
+{
+    public $id = null;
+    public $socket = null;
+    public $groups = [];
+
+    public function __construct($pId, $pSocket){
+        $this->id = $pId;
+        $this->socket = $pSocket;
+    }
+
+    static public function generateId(){
+        $chars = array();
+        $chars = array_merge($chars, range("a", "z"));
+        $chars = array_merge($chars, range("A", "Z"));
+        $chars = array_merge($chars, range(0, 9));
+        $maxChars = count($chars);
+        $string = "";
+        for($i = 0;$i<16;$i++)
+            $string .= $chars[rand(0, $maxChars-1)];
+        return $string;
+    }
+}
+
+class WebSocketMessage
+{
+
+    static public function read($pRawMessage){
+
+        $length = ord($pRawMessage[1]) & 127;
+        if($length == 126) {
+            $masks = substr($pRawMessage, 4, 4);
+            $data = substr($pRawMessage, 8);
+        }
+        elseif($length == 127) {
+            $masks = substr($pRawMessage, 10, 4);
+            $data = substr($pRawMessage, 14);
+        }
+        else {
+            $masks = substr($pRawMessage, 2, 4);
+            $data = substr($pRawMessage, 6);
+        }
+        $socketData = "";
+        for ($i = 0; $i < strlen($data); ++$i) {
+            $socketData .= $data[$i] ^ $masks[$i%4];
+        }
+        return mb_convert_encoding($socketData, 'utf-8');
+    }
+
+    static public function write($pMessage){
+        $b1 = 0x80 | (0x1 & 0x0f);
+        $length = strlen($pMessage);
+
+        if($length <= 125)
+            $header = pack('CC', $b1, $length);
+        elseif($length > 125 && $length < 65536)
+            $header = pack('CCn', $b1, 126, $length);
+        elseif($length >= 65536)
+            $header = pack('CCNN', $b1, 127, $length);
+        return $header.$pMessage;
     }
 }
