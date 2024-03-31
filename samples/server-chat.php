@@ -1,19 +1,21 @@
 <?php
 
+include_once("../src/class.WebSocketMessage.php");
+include_once("../src/class.WebSocketClient.php");
 include_once("../src/class.WebSocketServer.php");
 
 const PORT = 3001;
 
 $wss = new WebSocketServer(PORT);
 
-$wss->onMessage(function($pMessage) use ($wss){
-    $wss->notifyAllClients('Got a message '.$pMessage);
+$wss->onMessage(function(WebSocketMessage $pMessage) use ($wss){
+    $wss->notifyAllClients($pMessage->payload, $pMessage->event);
 });
-$wss->onClientConnection(function($pMessage) use ($wss){
-    $wss->notifyAllClients('new Client '.$pMessage);
+$wss->onClientConnection(function(WebSocketMessage $pMessage) use ($wss){
+    $wss->notifyAllClients($pMessage->payload, $pMessage->event);
 });
-$wss->onClientDisconnection(function($pMessage) use ($wss){
-    $wss->notifyAllClients('Client left');
+$wss->onClientDisconnection(function(WebSocketMessage $pMessage) use ($wss){
+    $wss->notifyAllClients($pMessage->payload, $pMessage->event);
 });
 
 
