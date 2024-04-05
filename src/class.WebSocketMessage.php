@@ -8,9 +8,12 @@ class WebSocketMessage
 
     public $client;
 
-    public function __construct($pEvent = "", $pPayload = ""){
+    public $groups;
+
+    public function __construct($pEvent = "", $pPayload = "", $pGroups = []){
         $this->event = $pEvent;
         $this->payload = $pPayload;
+        $this->groups = $pGroups;
     }
 
     static public function read($pRawMessage){
@@ -33,7 +36,10 @@ class WebSocketMessage
             $socketData .= $data[$i] ^ $masks[$i%4];
         }
         $stringJson = json_decode(mb_convert_encoding($socketData, 'utf-8'), true);
-        return new WebSocketMessage($stringJson['event'], $stringJson['payload']);
+        if(!$stringJson){
+            return null;
+        }
+        return new WebSocketMessage($stringJson['event'], $stringJson['payload'], $stringJson['groups']);
     }
 
     static public function write($pPayload, $pEvent = ""){

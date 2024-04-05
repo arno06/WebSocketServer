@@ -77,22 +77,28 @@ class WebSocketServer
                 else{
                     $bytes = @socket_recv($socket,$buffer,2048,0);
                     if($bytes == 0){
+                        $error = socket_last_error($socket);
                         socket_close($socket);
                         unset($this->client_sockets[$index]);
-                        $this->debug('disconnected '.$socketClient->id.' '.socket_last_error($socket).' '.count($this->client_sockets));
-                        $this->callHandler($this->clientDisconnectionHandler, [new WebSocketMessage(self::EVENT_CLIENT_LEAVE)]);
+                        $this->debug('disconnected '.$socketClient->id.' '.$error.' '.count($this->client_sockets));
+                        $this->callHandler($this->clientDisconnectionHandler, [new WebSocketMessage(self::EVENT_CLIENT_LEAVE, $socketClient->id, $socketClient->groups)]);
                     }else{
                         $socketMessage = WebSocketMessage::read($buffer);
+                        if(!$socketMessage){
+                            continue;
+                        }
                         $socketMessage->client = $socketClient;
                         switch($socketMessage->event){
                             case self::EVENT_CLIENT_GROUP_JOIN:
                                 $socketClient->join($socketMessage->payload);
+                                $socketMessage->groups = [$socketMessage->payload];
                                 break;
                             case self::EVENT_CLIENT_GROUP_LEAVE:
                                 $socketClient->leave($socketMessage->payload);
+                                $socketMessage->groups = [$socketMessage->payload];
                                 break;
                         }
-                        $this->debug($socketClient->id.' :: '.$socketMessage->event.' '.$socketMessage->payload);
+                        $this->debug($socketClient->id.' :: '.$socketMessage->event);
                         $this->callHandler($this->messageHandler, [$socketMessage]);
                     }
                 }
@@ -104,7 +110,6 @@ class WebSocketServer
         if(empty($pClients)){
             return false;
         }
-        $this->debug('notifying "'.$pPayload.'" to '.count($pClients).' clients');
         $message = WebSocketMessage::write($pPayload, $pEvent);
         $messageLength = strlen($message);
         foreach($pClients as $clientSocket)
@@ -131,6 +136,14 @@ class WebSocketServer
             return false;
         });
         return $this->notifyClients($pPayload, $pEvent, $clients);
+    }
+
+    public function notifyMessage(WebSocketMessage $pMessage){
+        if(empty($pMessage->groups)){
+            $this->notifyAllClients($pMessage->payload, $pMessage->event);
+        }else{
+            $this->notifyGroups($pMessage->payload, $pMessage->event, $pMessage->groups);
+        }
     }
 
     public function onMessage($pCallBack){

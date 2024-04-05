@@ -9,13 +9,13 @@ const PORT = 3001;
 $wss = new WebSocketServer(PORT);
 
 $wss->onMessage(function(WebSocketMessage $pMessage) use ($wss){
-    $wss->notifyAllClients($pMessage->payload, $pMessage->event);
+    $wss->notifyMessage($pMessage);
 });
 $wss->onClientConnection(function(WebSocketMessage $pMessage) use ($wss){
-    $wss->notifyAllClients($pMessage->payload, $pMessage->event);
+    $wss->notifyMessage($pMessage);
 });
 $wss->onClientDisconnection(function(WebSocketMessage $pMessage) use ($wss){
-    $wss->notifyAllClients($pMessage->payload, $pMessage->event);
+    $wss->notifyMessage($pMessage);
 });
 
 

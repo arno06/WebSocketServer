@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Simple chat</title>
+    <style>
+        html, body{width:100%;height:100%;overflow: hidden;padding:0;margin:0;}
+        .ui{height:100%;display:flex;gap:1em;flex-direction: column;}
+        .ui .messages{flex:1 1 auto;background:#efefef;overflow: auto;padding:1em;display:flex;flex-direction: column;gap:1em;}
+        .ui .messages>div{display:flex;align-items:start;}
+        .ui .messages>div>div{background:#fff;padding:1em;}
+        .ui .messages>div.me{justify-content:end;}
+        .ui .action{flex:0 0 auto;display:flex;gap:.5em;height:75px;padding:5px;align-items: center;}
+        .ui .action textarea{flex:1 1 auto;padding:5px;resize: none;}
+        .ui .action button{flex:0 0 auto;padding:5px 10px;}
+    </style>
+</head>
+<body>
+    <div class="ui">
+        <div class="messages">
+        </div>
+        <div class="action">
+            <input type="text" name="group" value="Group1">
+            <textarea name="message"></textarea>
+            <button class="send">Envoyer</button>
+        </div>
+    </div>
+  <script>
+      class PHPWSocket
+      {
+          constructor(pServerURL){
+              this.events = {
+                  'client_accepted':(pPayload)=>{
+                      this.id = pPayload;
+                  }
+              };
+              this.id = null;
+              try{
+                  this.socket = new WebSocket(pServerURL);
+                  this.socket.addEventListener('message', this.messageHandler.bind(this));
+              }
+              catch(error){
+                  console.warn(error);
+              }
+          }
+
+          messageHandler(e){
+              let message = JSON.parse(event.data);
+              if(message.event && this.events[message.event]){
+                  this.events[message.event](message.payload);
+              }
+          }
+
+          addEventListener(pEvent, pHandler){
+              if(!this.socket){
+                  return;
+              }
+              if(["error", "open"].indexOf(pEvent)>-1){
+                  this.socket.addEventListener(pEvent, pHandler);
+                  return;
+              }
+              this.events[pEvent] = pHandler;
+          }
+
+          send(pEvent, pPayload, pGroups = []){
+              if(this.socket.readyState === this.socket.CLOSED){
+                  return;
+              }
+              console.log(pGroups);
+              this.socket.send(JSON.stringify({
+                  event:pEvent,
+                  payload:pPayload,
+                  groups:pGroups
+              }));
+          }
+
+          joinGroup(pGroup){
+              this.send('group_join', pGroup);
+          }
+
+          leaveGroup(pGroup){
+              this.send('group_leave', pGroup);
+          }
+      }
+
+      (()=>{
+
+          const MESSAGE_EVENT = 'chat_message';
+
+          function init(){
+              document.querySelector('.send').addEventListener('click', (e)=>{
+                  let textarea = document.querySelector('textarea[name="message"]');
+                  if(!textarea.value.length){
+                      return;
+                  }
+                  socket.send(MESSAGE_EVENT, {
+                      message:textarea.value,
+                      from:socket.id,
+                      timestamp:(new Date()).getTime()
+                  }, [document.querySelector('input[name="group"]').value]);
+                  textarea.value = "";
+              });
+          }
+
+          let socket = new PHPWSocket("ws://localhost:3001");
+
+          socket.addEventListener("error", (event) => {
+              console.log("WebSocket error: ", event);
+          });
+
+          // Connection opened
+          socket.addEventListener("open", (event) => {
+              console.log("connexion OPENED", event);
+              socket.joinGroup(document.querySelector('input[name="group"]').value);
+          });
+
+          socket.addEventListener('group_join', (pData)=>{
+              console.log("group join ", pData);
+          });
+
+          socket.addEventListener(MESSAGE_EVENT, (pData) => {
+
+              let div = document.createElement('div');
+              div.classList.add(pData.from === socket.id?'me':'others');
+
+              let d = document.createElement('div');
+              div.appendChild(d);
+
+              if(pData.from !== socket.id){
+                  let f = document.createElement('div');
+                  f.innerHTML = pData.from;
+                  f.classList.add('from');
+                  d.appendChild(f);
+              }
+
+              let p = document.createElement('p');
+              p.innerHTML = pData.message;
+              d.appendChild(p);
+
+              let date = new Date();
+              date.setTime(pData.timestamp);
+              let span = document.createElement('span');
+              span.innerHTML = date.toLocaleDateString();
+              d.appendChild(span);
+
+              document.querySelector('.messages').appendChild(div);
+          });
+
+          window.addEventListener('DOMContentLoaded', init);
+      })();
+  </script>
+</body>
+</html>
