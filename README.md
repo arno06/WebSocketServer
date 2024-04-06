@@ -1,6 +1,6 @@
 # WebSocketServer
 
-WIP
+PHP implementation of a web socket server. No dependency required. 
 
 ## Running sample
 
@@ -10,11 +10,7 @@ Starting standalone server :
 php -q samples/server-chat.php
 ```
 
-`samples/index.html` has to be server by a webserver (IE `Apache` or `Nginx`)
-
-## Todo
-
- * Groups (events for joining and leaving)
+`samples/simple_chat.html` has to be served by a webserver (IE `Apache` or `Nginx`)
 
 ## Code
 
@@ -24,9 +20,10 @@ php -q samples/server-chat.php
 
 ### class.WebSocketMessage.php
  * Simple message implementation
- * Exchanges between Server and client are made through JSON containing 2 props : `event` and `payload`
+ * Exchanges between Server and client are made through JSON containing 3 props : `event`, `payload` and `groups`
    * `event` must be a string (some are reserved, see @WebSocketServer constants)
    * `payload` could be a string, an array or an object
+   * `groups` array of strings, represents targeted groups. If empty, the message should be sent to every client.
  * Class is responsible for packing (`write`), unpacking (`read`) messages
 
 ### class.WebSocketClient.php
